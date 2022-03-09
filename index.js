@@ -1,7 +1,9 @@
+require('dotenv').config()
 const express = require('express')
 const app = express()
 const morgan = require('morgan')
 const cors = require('cors')
+const Person = require('./models/person')
 
 app.use(express.json())
 app.use(cors())
@@ -38,7 +40,9 @@ morgan.token('data', (req, res) => {
 app.use(morgan(":method :url :status :res[content-length] - :response-time ms :data"))
 
 app.get('/api/persons', (request, response) => {
-  response.json(persons)
+  Person.find({}).then(persons => {
+    response.json(persons)
+  })
 })
 
 app.get('/info', (request, response) => {
@@ -50,46 +54,81 @@ app.get('/info', (request, response) => {
 })
 
 app.get('/api/persons/:id', (request, response) => {
-  const id = Number(request.params.id)
-  const person = persons.find(p => p.id === id)
-  response.json(person)
+  Person.findById(request.params.id).then(person => {
+    response.json(person)
+  })
 })
 
-app.delete('/api/persons/:id', (request, response) => {
-  const id = Number(request.params.id)
-  persons = persons.filter(p => p.id !== id)
-  response.status(204).end()
-})
-
-app.post('/api/persons', (request, response) => {
+app.put('/api/persons/:id', (request, response, next) => {
+  const id = request.params.id
   const body = request.body
-  console.log(body);
+
+  const updatedPerson = {
+    name: body.name,
+    number: body.number
+  }
+  Person.findByIdAndUpdate(id, updatedPerson, { new: true, runValidators: true, context: 'query' })
+    .then(result => {
+      response.json(result)
+    })
+    .catch(err => next(err))
+})
+
+app.delete('/api/persons/:id', (request, response, next) => {
+  Person.findByIdAndRemove(request.params.id)
+    .then(result => {
+      response.status(204).end()
+    })
+    .catch(err => next(err))
+})
+
+app.post('/api/persons', (request, response, next) => {
+  const body = request.body
 
   if (!body) {
     return response.status(400).send('Please provide contact info')
   }
 
-  const checkDuplicateName = persons.find(person => person.name === body.name)
+  let checkDuplicateName;
+  Person.findOne({ name: body.name }).then(result => {
+    checkDuplicateName = result
+  })
   if (checkDuplicateName) {
     return response.status(400).json({ error: 'name must be unique' })
   }
 
-  const newPerson = {
-    id: Math.floor(Math.random() * 1000000),
+  const newPerson = new Person({
     name: body.name,
     number: body.number
-  }
+  })
 
-  persons = persons.concat(newPerson)
-  response.json(newPerson)
+  newPerson.save()
+    .then(returnedPerson => {
+      response.json(returnedPerson)
+    })
+    .catch(err => next(err))
 })
 
 
+// middlewares
 const unknownEndpoint = (request, response) => {
   response.status(404).send({ error: 'unknown endpoint' })
 }
 
+const errorHandler = (err, request, response, next) => {
+  console.error(err.message)
+
+  if (err.name === 'CastError') {
+    return response.status(400).send({ error: 'malformatted id' })
+  } else if (err.name === 'ValidationError') {
+    return response.status(400).json({ error: err.message })
+  }
+
+  next(err)
+}
+
 app.use(unknownEndpoint)
+app.use(errorHandler)
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
